@@ -1,0 +1,58 @@
+#ifndef CHAMPSIM_H
+#define CHAMPSIM_H
+
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <limits.h>
+#include <time.h>
+#include <assert.h>
+#include <signal.h>
+#include <sys/types.h>
+
+#include <iostream>
+#include <queue>
+#include <map>
+#include <random>
+#include <string>
+#include <iomanip>
+
+// USEFUL MACROS
+#define DEBUG_PRINT
+#define SANITY_CHECK
+#define LLC_BYPASS
+#define L2_BYPASS 		//Neelu: While uncommenting, set bypass mode in cache.cc as well, otherwise it will not work. 
+#define DRC_BYPASS
+#define NO_CRC2_COMPILE
+
+#define PUSH_DTLB_PB 	//@Vasudha: Use DTLB Prefetch buffer to store translations that are prefetched by DTLB
+#define INS_PAGE_TABLE_WALKER
+
+#define PERFECT_BTB
+
+//Neelu: Perfect vs. Practical Perfect: 
+//Practical Perfect takes into account the bandwidth constraint between the current cache level and the outer cache hierarchy. What does this mean? 
+//Perfect marks requests as hits and avoids sending them to the rest of the memory hierarchy and so no fills will happen in the current cache level either. In this case, instruction requests at L2/LLC may get serviced earlier as data requests are not going to these caches. 
+//Practical perfect marks all requests as hits, but in case it would've been a miss in the non-perfect case, it also sends out a request to the outer level cache, so over-estimation of perfect-case performance doesn't happen due to under-estimating the load on MSHRs and outer level cache. 
+#define PERFECT_L1D
+#define PRACTICAL_PERFECT_L1D
+#define PERFECT_L2C
+#define PRACTICAL_PERFECT_L2C
+
+#pragma GCC diagnostic ignored "-Wmisleading-indentation" //@Vishal: Added to ignore this warning
+#pragma GCC diagnostic ignored "-Wunused-variable"
+
+#define PRINT_QUEUE_TRACE
+#define QTRACE_INSTR_ID 5191
+
+
+#ifdef DEBUG_PRINT
+#define DP(x) x //@Vishal: Use this to print only in simulation
+
+#define DP(x) {int temp=warmup_complete[0];warmup_complete[0]=1;x;warmup_complete[0]=temp;} //@Vishal: Use this to print in warmup+simulation
+
+#else
+#define DP(x)
+#endif
