@@ -63,16 +63,19 @@ NC=$'\e[0m'
 
 mkdir -p $DIR > /dev/null 2>&1
 
-echo -n -e "\rDownload SPEC2K17 traces [0/$NUM_TRACES]"
+echo "Download SPEC2K17 traces [0/$NUM_TRACES] "
 num=0
 for i in "${TRACES[@]}"; do
     # Download spec traces
     if [[ "$VERBOSE" == "Y" ]]; then
-        curl $URL$i --output $DIR/$i
+        #curl $URL$i --output $DIR/$i
+        echo "Y"
+        curl --progress-bar $URL$i --output $DIR/$i 2>&1 | 
+            tr $'\r' $'\n' | sed -r 's/[# ]+/#/g;'
     else
-        curl $URL$i --output $DIR/$i > /dev/null 2>&1
+        curl --progress-bar $URL$i --output $DIR/$i 2>&1 | tr -d '\n'
     fi
     num=$(($num + 1))
-    echo -n -e "\rDownload SPEC2K17 traces [$num/$NUM_TRACES]"
+    echo "Download SPEC2K17 traces [$num/$NUM_TRACES]"
 done
-echo -e "\rDownload SPEC2K17 traces ${GREEN}[$num/$NUM_TRACES]${NC}"
+echo -e "Download SPEC2K17 traces ${GREEN}[$num/$NUM_TRACES]${NC}"

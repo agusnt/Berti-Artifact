@@ -23,6 +23,7 @@ in an AMD Rome 7702P with 128 threads.
 - Python 3.6.9
 - Bash 4.4.20
 - GCC 7.5.0
+- Curl 7.61
 
 ### Python Packages
 
@@ -102,3 +103,15 @@ Generating Figure 9 (a)... done
 Generating Figure 10 SPEC17-MemInt... done
 Removing Temporal Files... done
 ```
+
+## Parameters
+
+```
+Options: 
+ -h: help
+ -v: verbose mode
+ -p [num]: run using [num] threads
+ -g: build GCC7.5 from scratch
+ -d: compile with docker
+ -c: clean all generated files (traces and gcc7.5)
+```Bash
