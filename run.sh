@@ -24,7 +24,7 @@ REMOVE_ALL="N"
 DIR=$(pwd)
 BERTI="./ChampSim/Berti"
 PF="./ChampSim/Other_PF"
-TRACES_SPEC="traces/spec2k17"
+TRACES_SPEC="traces/spec2017"
 OUT="output"
 
 ################################################################################
@@ -64,16 +64,16 @@ run_trace ()
     NUM_TRACES=$(ls $2/* | wc -l)
     num=0
 
-    echo -n -e "\rRunning $4 with SPEC2K17 traces [0/$NUM_TRACES]"
+    echo -n -e "\rRunning $4 with SPEC CPU2017 traces [0/$NUM_TRACES]"
     for i in $2/*;
     do
         trace=$(echo $i | rev | cut -d'/' -f1 | rev)
         $1 -warmup_instructions 50000000 -simulation_instructions 200000000\
             -traces $i > $OUT/$3---$trace 2>/dev/null
         num=$(($num + 1))
-        echo -n -e "\rRunning $4 with SPEC2K17 traces [$num/$NUM_TRACES]"
+        echo -n -e "\rRunning $4 with SPEC CPU2017 traces [$num/$NUM_TRACES]"
     done
-    echo -e "\rRunning $4 with SPEC2K17 traces ${GREEN}[$num/$NUM_TRACES]${NC}"
+    echo -e "\rRunning $4 with SPEC CPU2017 traces ${GREEN}[$num/$NUM_TRACES]${NC}"
 }
 
 file_trace () 
@@ -176,7 +176,7 @@ if [[ "$GCC" == "Y" ]]; then
 fi
 
 #----------------------------------------------------------------------------#
-#                            Download SPEC2K17 Traces                        #
+#                          Download SPEC CPU2017 Traces                      #
 #----------------------------------------------------------------------------#
 ./download_spec2k17.sh $TRACES_SPEC
 
@@ -252,7 +252,7 @@ echo ""
 echo -n "Parsing data..."
 python3 Python/get_data.py y output > single.csv 2>/dev/null
 echo " ${GREEN}done${NC}"
-echo "SPEC CPU2K17 Memory Intensive SpeedUp"
+echo "SPEC CPU2017 Memory Intensive SpeedUp"
 echo "--------------------------------------"
 echo "| Prefetch | Speedup | L1D Accuracy |"
 while read line; do 
@@ -267,14 +267,14 @@ while read line; do
     fi
 done < single.csv
 echo "--------------------------------------"
-echo -n "Generating Figure 8 SPEC17-MemInt..."
-echo "spec2k17_memint" > single.csv
+echo -n "Generating Figure 8 SPEC_CPU2017-MemInt..."
+echo "spec_cpu2017_memint" > single.csv
 python3 Python/get_data_fig.py y output >> single.csv 2>/dev/null
 run_command "python3 Python/one_prefetch_performance.py single.csv"
 echo -n "Generating Figure 9 (a)..."
 python3 Python/get_data_by_traces.py y SpeedUp output > spec.csv 2>/dev/null
 run_command "python3 Python/by_app_performance.py spec.csv cpu"
-echo -n "Generating Figure 10 SPEC17-MemInt..."
+echo -n "Generating Figure 10 SPEC_CPU2017-MemInt..."
 run_command "python3 Python/l1d_accuracy.py single.csv"
 
  echo -n "Removing Temporal Files..."

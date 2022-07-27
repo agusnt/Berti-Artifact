@@ -11,7 +11,7 @@ Microarchitecture_ (MICRO-55), October 2022.
 
 ## Overview
 
-This repository provides an artifact to reproduce the SPEC CPU2K17 single-thread
+This repository provides an artifact to reproduce the SPEC CPU2017 single-thread
 experiments. In particular it reproduce the fig 8, 9a and 10 from **Berti: an
 Accurate and Timely Local-Delta Data Prefetcher**
 
@@ -43,7 +43,7 @@ This repository is organized as follow:
 - `./ChampSim/Berti`: Berti code
 - `./ChampSim/Other_PF`: Other prefetchers code
 - `./compile_gcc.sh`: Script for download and build GCC 7.5.0 from scratch
-- `./download_spec2k17.sh`: Script for download SPEC CPU2K17 traces
+- `./download_spec2k17.sh`: Script for download SPEC CPU2017 traces
 
 ## How to execute the artifact?
 
@@ -61,7 +61,7 @@ The available options can be consulted with the following command:
 
 ### Sequential vs Parallel execution
 
-To speedup the execution of the artifact we provide an optional flag that run
+To speedup the execution of the artifact we provide an optional flag that runs
 the simulations in parallel: `./run.sh -p [number of thread]`.
 
 ### Native Run
@@ -82,7 +82,7 @@ After the execution of the artifact an output like this is expected:
 Building with Docker
 Running in Parallel
 
-Download SPEC2K17 traces [44/44]
+Download SPEC CPU2017 traces [44/44]
 Building Berti... done
 Building MLOP... done
 Building IPCP... done
@@ -93,16 +93,16 @@ Running... done
 Results, it requires numpy, scipy, maptlotlib and pprint
 
 Parsing data... done
-SPEC CPU2K17 Memory Intensive SpeedUp
+SPEC CPU2017 Memory Intensive SpeedUp
 --------------------------------------
 | Prefetch | Speedup | L1D Accuracy |
 | IPCP     | 09%     | 64.9%        |
 | MLOP     | 08%     | 68.0%        |
 | Berti    | 12%     | 88.0%        |
 --------------------------------------
-Generating Figure 8 SPEC17-MemInt... done
+Generating Figure 8 SPEC_CPU2017-MemInt... done
 Generating Figure 9 (a)... done
-Generating Figure 10 SPEC17-MemInt... done
+Generating Figure 10 SPEC_CPU2017-MemInt... done
 Removing Temporal Files... done
 ```
 

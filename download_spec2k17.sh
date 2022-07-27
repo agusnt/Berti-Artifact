@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Download the memory intensive SPEC2K17 traces
+# Download the memory intensive SPEC CPU2017 traces
 # 
 # @Author: Navarro Torres, Agustín
 # @Date: 25/07/2022
@@ -63,7 +63,7 @@ NC=$'\e[0m'
 
 mkdir -p $DIR > /dev/null 2>&1
 
-echo "Download SPEC2K17 traces [0/$NUM_TRACES] "
+echo "Download SPEC CPU2017 traces [0/$NUM_TRACES] "
 num=0
 for i in "${TRACES[@]}"; do
     # Download spec traces
@@ -73,6 +73,6 @@ for i in "${TRACES[@]}"; do
         curl --progress-bar $URL$i --output $DIR/$i 2>&1 | tr -d '\n'
     fi
     num=$(($num + 1))
-    echo "Download SPEC2K17 traces [$num/$NUM_TRACES]"
+    echo "Download SPEC CPU2017 traces [$num/$NUM_TRACES]"
 done
-echo -e "Download SPEC2K17 traces ${GREEN}[$num/$NUM_TRACES]${NC}"
+echo -e "Download SPEC CPU2017 traces ${GREEN}[$num/$NUM_TRACES]${NC}"
