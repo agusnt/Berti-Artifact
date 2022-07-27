@@ -1,5 +1,7 @@
 # Berti-Artifact
 
+[![DOI](https://zenodo.org/badge/518392799.svg)](https://zenodo.org/badge/latestdoi/518392799)
+
 Artifact used to evaluate the Berti prefetcher presented in the following paper:
 >*Agustín Navarro-Torres, Biswabandan Panda, Jesús Alastruey-Benedé, Pablo Ibáñez 
 >Víctor Viñals-Yúfera, Alberto Ros*
