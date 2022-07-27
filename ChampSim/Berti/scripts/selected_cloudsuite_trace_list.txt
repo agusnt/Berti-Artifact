@@ -1,0 +1,5 @@
+cassandra_phase4_core1.trace.gz
+classification_phase1_core1.trace.gz
+cloud9_phase5_core2.trace.gz
+nutch_phase2_core0.trace.gz
+streaming_phase0_core2.trace.gz

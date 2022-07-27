@@ -1,0 +1,54 @@
+#include "cache.h"
+
+#include <map>
+#include <vector>
+
+//#define TRACE_DUMP		//Neelu: Addition Trace Dump prints
+
+map<uint64_t, uint64_t> last_accessed_address;	//Neelu: Stores last accessed address per IP.  
+uint64_t idx = 0;
+uint64_t enorme[100000000] = {0};
+
+void CACHE::l1d_prefetcher_initialize() 
+{
+
+}
+
+void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type, uint8_t critical_ip_flag)
+{
+
+if (cache_hit) return;
+
+    if (ip == 18446744071543197016) idx++;
+    else if (idx != 0)  if (idx <= 100000000) enorme[idx-1]++;
+	if(last_accessed_address.find(ip) != last_accessed_address.end())
+	{
+         last_accessed_address[ip]++;
+	} else last_accessed_address[ip] = 1;
+	
+}
+
+void CACHE::l1d_prefetcher_notify_about_dtlb_eviction(uint64_t addr, uint32_t set, uint32_t way, uint8_t prefetch, uint64_t evicted_addr, uint32_t metadata_in)
+{
+
+}
+
+void CACHE::l1d_prefetcher_cache_fill(uint64_t v_addr, uint64_t addr, uint32_t set, uint32_t way, uint8_t prefetch, uint64_t v_evicted_addr, uint64_t evicted_addr, uint32_t metadata_in)
+{
+
+
+}
+
+void CACHE::l1d_prefetcher_final_stats()
+{
+for (const auto &i: last_accessed_address) std::cout << i.first << ";" << i.second << std::endl;
+
+std::cout << std::endl;
+std::cout << std::endl;
+std::cout << std::endl;
+uint64_t total = 0;
+if (idx > 100000000) idx = 100000000;
+for (int i = 0; i < idx; i++) total += enorme[i];
+std::cout << "TOTAL:  " << (float)total / float(idx)<< std::endl;
+
+}

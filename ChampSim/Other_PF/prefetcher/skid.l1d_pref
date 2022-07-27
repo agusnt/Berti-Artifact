@@ -1,0 +1,676 @@
+#include "cache.h"
+
+#include <array>
+#include <algorithm>
+
+// ====================================
+//   T-SKID specific term definition
+// ====================================
+// trigger: cache accesses that occurs at a good time to prefetch
+// step: the delta between two access addresses issued from the same PC
+
+namespace { // anonymous
+
+// PC
+// This is a strong typedef of uint16_t.
+// PC is 25-bit in ChampSim.
+// PC is folded into 16-bit.
+class PC {
+	uint16_t value = 0;
+public:
+	PC() = default;
+	PC(const PC&) = default;
+	PC(PC&&) = default;
+	PC& operator=(const PC&) = default;
+	PC& operator=(PC&&) = default;
+	explicit PC(uint64_t pc) noexcept : value((pc^(pc>>16))) {}
+
+	bool operator==(PC rhs) const noexcept { return value == rhs.value; }
+	bool operator!=(PC rhs) const noexcept { return value != rhs.value; }
+	bool operator<(PC rhs) const { return value < rhs.value; }
+	explicit operator uint64_t() const noexcept { return value; }
+};
+
+// RawAddr
+// This is a strong typedef of uint64_t.
+// RawAddr is 48-bit in ChampSim.
+class RawAddr {
+	uint64_t value = 0;
+public:
+	RawAddr() = default;
+	RawAddr(const RawAddr&) = default;
+	RawAddr(RawAddr&&) = default;
+	RawAddr& operator=(const RawAddr&) = default;
+	RawAddr& operator=(RawAddr&&) = default;
+	explicit RawAddr(uint64_t addr) noexcept : value(addr) {}
+
+	bool operator==(RawAddr rhs) const noexcept { return value == rhs.value; }
+	bool operator!=(RawAddr rhs) const noexcept { return value != rhs.value; }
+	explicit operator uint64_t() const noexcept { return value; }
+	RawAddr operator+(int64_t d) const noexcept { return RawAddr(value + d); }
+	int64_t operator-(RawAddr rhs) const noexcept { return value - rhs.value; }
+};
+
+RawAddr mask_line_offset(RawAddr addr) noexcept {
+	return RawAddr( static_cast<uint64_t>(addr) & -BLOCK_SIZE );
+}
+
+bool is_in_the_same_page(RawAddr addr1, RawAddr addr2) noexcept {
+	return static_cast<uint64_t>(addr1) >> LOG2_PAGE_SIZE == static_cast<uint64_t>(addr2) >> LOG2_PAGE_SIZE;
+}
+
+// -------------
+//  Delay queue
+// -------------
+// This implementation of the delay queue is specific to the DPC3
+// simulator, as the DPC3 prefetcher can act only at certain clock
+// cycles. In a real processor, the delay queue implementation
+// can be simpler.
+// (http://comparch-conf.gatech.edu/dpc2/resource/dpc2_michaud.c)
+
+template<class T, size_t N, uint16_t Delay>
+class DelayQueue {
+	std::array<T, N> table;
+	std::array<uint16_t, N> cycle;
+	size_t tail;
+	size_t head;
+	// For distinguish whether full or empty when tail == head
+	bool full;
+public:
+	DelayQueue() noexcept : tail(0), head(0), full(false) {}
+
+	void push(T elem, uint16_t current_cycle) {
+		if (full) {
+			// When the queue is full, only to do is trash elem.
+			return;
+		} else {
+			table[tail] = std::move(elem);
+			cycle[tail] = current_cycle;
+			tail = (tail + 1) % N;
+			if (tail == head) { full = true; }
+		}
+	}
+
+	bool ready_to_pop(uint16_t current_cycle) const noexcept {
+		const bool empty = !full && tail == head;
+		if (empty) {
+			return false;
+		} else {
+			const uint16_t push_cycle = cycle[head];
+			const uint16_t ready_cycle = static_cast<uint16_t>(cycle[head] + Delay);
+			if (push_cycle < ready_cycle) {
+				// 0        push    ready      65536
+				// |          |       |          |
+				// <--ready-->        <--ready-->
+				return current_cycle < push_cycle || ready_cycle <= current_cycle;
+			} else {
+				// 0 ready                push 65536
+				// |   |                    |    |
+				//     <-------ready------->
+				return current_cycle < push_cycle && ready_cycle <= current_cycle;
+			}
+		}
+	}
+
+	const T& front() const noexcept {
+		return table[head];
+	}
+
+	void pop() noexcept {
+		head = (head + 1) % N;
+		full = false;
+	}
+};
+
+// -------------------------
+//  Fully associative table
+// -------------------------
+// In N-SKID prefetcher, this template is used for Inflight Prefetch
+// Table. Since there is a theoretical upper limit to the number of
+// entries in the table, no information for replacement is needed.
+template<class T, class U, size_t N>
+class FullyAssociativeTable {
+	struct Entry {
+		T key;
+		U value;
+		bool valid;
+	};
+	std::array<Entry, N> table;
+public:
+	FullyAssociativeTable() : table{} {}
+	void insert(T tag, U elem) {
+		const auto existing_entry = std::find_if(table.begin(), table.end(), [&tag](const Entry& entry) { return entry.valid && entry.key == tag; });
+		if (existing_entry != table.end()) {
+			existing_entry->value = std::move(elem);
+		} else {
+			const auto invalid_entry = std::find_if(table.begin(), table.end(), [](const Entry& entry) noexcept { return !entry.valid; });
+			if (invalid_entry != table.end()) {
+				*invalid_entry = Entry { std::move(tag), std::move(elem), true };
+			}
+		}
+	}
+	bool contains(const T& tag) const {
+		return std::any_of(table.begin(), table.end(), [&tag](const Entry& entry) { return entry.valid && entry.key == tag; });
+	}
+	const U& get(const T& tag) const {
+		assert(contains(tag));
+		const auto existing_entry = std::find_if(table.begin(), table.end(), [&tag](const Entry& entry) { return entry.valid && entry.key == tag; });
+		return existing_entry->value;
+	}
+	void invalidate(const T& tag) {
+		assert(contains(tag));
+		const auto existing_entry = std::find_if(table.begin(), table.end(), [&tag](const Entry& entry) { return entry.valid && entry.key == tag; });
+		existing_entry->valid = false;
+	}
+};
+
+// ---------------------------
+//  Fully associative LRU set
+// ---------------------------
+// In N-SKID prefetcher, this template is used for Recent Requests Table
+// and Trigger Table entry. This performs LRU replacement using lru_order.
+template<class T, size_t N>
+class FullyAssociativeLRUSet {
+	std::array<T, N> table;
+	std::array<size_t, N> lru_order;
+	void touch(size_t pos) {
+		for (size_t i = 0; i < N; ++i) {
+			if (lru_order[i] < lru_order.at(pos)) {
+				++lru_order[i];
+			}
+		}
+		lru_order.at(pos) = 0;
+	}
+public:
+	FullyAssociativeLRUSet() : table{} {
+		for (size_t i = 0; i < N; ++i) {
+			lru_order[i] = i;
+		}
+	}
+
+	const T* begin() const { return table.begin(); }
+	T* begin() { return table.begin(); }
+	const T* end() const { return table.end(); }
+	T* end() { return table.end(); }
+	void insert(const T& val) {
+		const size_t lru_pos = std::max_element(lru_order.begin(), lru_order.end() ) - lru_order.begin();
+		table.at(lru_pos) = val;
+		touch(lru_pos);
+	}
+
+	void insert_or_touch(const T& val) {
+		const size_t existing_pos = std::find(begin(), end(), val) - begin();
+		if (existing_pos != N) {
+			touch(existing_pos);
+		} else {
+			insert(val);
+		}
+	}
+	bool contains(const T& val) const { return std::find(begin(), end(), val) != end(); }
+	void move_to_lru(const T& val) {
+		const auto existing_pos = std::find(begin(), end(), val) - begin();
+		lru_order.at(existing_pos) = N - 1;
+	}
+};
+
+// ------------------------------
+//  PC set associative LRU table
+// ------------------------------
+// In N-SKID prefetcher, this template is used for Trigger Table and
+// Step Table. This performs LRU replacement using lru_order.
+template<class U, size_t N_Sets, size_t N_Ways>
+class PCSetAssociativeLRUTable {
+	static size_t make_set(PC pc) noexcept { return static_cast<uint64_t>(pc) % N_Sets; }
+	static size_t make_tag(PC pc) noexcept { return static_cast<uint64_t>(pc) / N_Sets; }
+	struct Entry {
+		size_t tag;
+		U value;
+		bool valid;
+		size_t lru_order;
+	};
+	std::array<std::array<Entry, N_Ways>, N_Sets> table;
+	const Entry& find(PC key) const noexcept {
+		const size_t set = make_set(key);
+		const size_t tag = make_tag(key);
+		return *std::find_if(table.at(set).begin(), table.at(set).end(), [tag](const Entry& entry) noexcept { return entry.valid && entry.tag == tag; });
+	}
+	Entry& find(PC key) noexcept {;
+		const size_t set = make_set(key);
+		const size_t tag = make_tag(key);
+		return *std::find_if(table.at(set).begin(), table.at(set).end(), [tag](const Entry& entry) noexcept { return entry.valid && entry.tag == tag; });
+	}
+public:
+	PCSetAssociativeLRUTable() : table{} {
+		for (size_t i = 0; i < N_Sets; ++i) {
+			for (size_t j = 0; j < N_Ways; ++j) {
+				table[i][j].lru_order = j;
+			}
+		}
+	}
+	const U& operator[](PC key) const { return find(key).value; }
+	U& operator[](PC key) { return find(key).value; }
+	void touch(PC key) noexcept {
+		const size_t set = make_set(key);
+		auto& entry = find(key);
+		for (auto& e : table.at(set)) {
+			if (e.lru_order < entry.lru_order) {
+				++e.lru_order;
+			}
+		}
+		entry.lru_order = 0;
+	}
+	void allocate_or_touch(PC key) {
+		if (contains(key)) {
+			touch(key);
+		} else {
+			insert(key, U{});
+		}
+	}
+	void insert(PC key, U elem) {
+		if (contains(key)) {
+			find(key).value = std::move(elem);
+			touch(key);
+		} else {
+			const size_t set = make_set(key);
+			const size_t tag = make_tag(key);
+			const auto lru_pos = std::max_element(table.at(set).begin(), table.at(set).end(), [](const Entry& lhs, const Entry& rhs) noexcept { return lhs.lru_order < rhs.lru_order; });
+			lru_pos->tag = tag;
+			lru_pos->value = std::move(elem);
+			lru_pos->valid = true;
+			touch(key);
+		}
+	}
+	bool contains(PC key) const noexcept {
+		const size_t set = make_set(key);
+		const size_t tag = make_tag(key);
+		return std::any_of(table.at(set).begin(), table.at(set).end(), [tag](const Entry& entry) noexcept { return entry.valid && entry.tag == tag; });
+	}
+};
+
+// ----------------
+//  Confidence set
+// ----------------
+// This template is a N entries set with confidence counter. This set
+// holds confidence numerator (per entry) and denominator. The maximum
+// count of numerator is MaxConfidence - 1, and the maximum count of
+// denominator is MaxConfidence * N - 1. adjust() function halves all the
+// entries when there are any entries exceed maxmum count.
+template<class T, size_t MaxConfidence, size_t N>
+class ConfidenceSet {
+	struct Entry {
+		T key;
+		size_t confidence;
+	};
+	std::array<Entry, N> table;
+	size_t denominator;
+
+	void adjust() noexcept {
+		const bool denominator_overflow = denominator == MaxConfidence * N;
+		const bool numerator_overflow = std::any_of(begin(), end(), [](const Entry& entry) { return entry.confidence == MaxConfidence; });
+		if (denominator_overflow || numerator_overflow) {
+			for (auto& entry : table) {
+				entry.confidence >>= 1;
+			}
+			denominator >>= 1;
+		}
+	}
+public:
+	ConfidenceSet() : table{} {}
+	const Entry* begin() const { return table.begin(); }
+	Entry* begin() { return table.begin(); }
+	const Entry* end() const { return table.end(); }
+	Entry* end() { return table.end(); }
+	void count_up(const T& tag) {
+		const auto existing_entry = std::find_if(begin(), end(), [&tag](const Entry& entry) { return entry.confidence > 0 && entry.key == tag; });
+		if (existing_entry != end()) {
+			++existing_entry->confidence;
+			++denominator;
+			adjust();
+		} else {
+			const auto invalid_entry = std::find_if(begin(), end(), [](const Entry& entry) { return entry.confidence == 0; });
+			if (invalid_entry != end()) {
+				invalid_entry->key = tag;
+				invalid_entry->confidence = 1;
+				++denominator;
+				adjust();
+			} else {
+				++denominator;
+				adjust();
+			}
+		}
+	}
+	bool contains(const T& tag) const { return std::any_of(begin(), end(), [&tag](const Entry& entry) { return entry.confidence > 0 && entry.key == tag; }); }
+};
+
+// ============
+//  Step info 
+// ============
+// This is an entry of Step Table. This holds address of last access
+// (last_addr) to calculate delta.  
+struct StepInfo {
+	RawAddr last_addr;
+	ConfidenceSet<uint64_t, 8, 4> step_group;
+	ConfidenceSet<PC, 8, 16> trigger_pc_group;;
+	StepInfo() noexcept : last_addr(0), step_group{}, trigger_pc_group{} {}
+	explicit StepInfo(RawAddr last_addr) noexcept : last_addr(last_addr), step_group{}, trigger_pc_group{} {}
+};
+
+// ===============
+//  Triger access
+// ===============
+// PC and address of trigger access.
+struct TriggerAccess {
+	PC pc;
+	RawAddr addr;
+	bool operator==(const TriggerAccess& rhs) const noexcept { return pc == rhs.pc && addr == rhs.addr; }
+	bool operator!=(const TriggerAccess& rhs) const noexcept { return pc != rhs.pc || addr != rhs.addr; }
+};
+
+static constexpr size_t RecentRequestTableSize = 16;
+static constexpr size_t StepTableSize = 512;
+static constexpr size_t TargetTableSize = 512;
+static constexpr size_t TargetTable_TargetPerEntry = 16;
+static constexpr size_t DELAY_QUEUE_SIZE = 128;
+static constexpr uint16_t DELAY_TIME = 100;
+static constexpr size_t MaxInflightPrefetch = L1D_PQ_SIZE + L1D_MSHR_SIZE; // 8+8=16
+
+
+
+CACHE* pCache;
+
+// ------------
+//  Meta cache
+// ------------
+// This is a component of Prefetch Filter which denies prefetching
+// addresses existing in the cache in order not to waste PQ entries.
+// We made this table to obey the DPC3 rules.
+// It has only tags of the caches.
+// Budget:
+//  tag 36bits X 8way X 64set = 18432bits
+std::array<std::array<uint64_t, L1D_WAY>, L1D_SET> meta_cache[NUM_CPUS];
+uint64_t make_L1D_tag(RawAddr addr) noexcept {
+	return (static_cast<uint64_t>(addr) >> LOG2_BLOCK_SIZE) / L1D_SET; 
+}
+bool is_in_cache(RawAddr addr) noexcept {
+	const size_t set = static_cast<uint64_t>(addr) >> LOG2_BLOCK_SIZE & ~-L1D_SET;
+	return std::find(meta_cache[pCache->cpu].at(set).begin(), meta_cache[pCache->cpu].at(set).end(), make_L1D_tag(addr)) != meta_cache[pCache->cpu].at(set).end();
+}
+
+// --------------
+//  PrefetchBit
+// --------------
+// This is used to know whether a cache line is inserted by a prefetcher
+// when a cache hit occurs.
+// Budget:
+//  1bit X 8way X 64set = 512bits
+std::array<std::array<bool, L1D_WAY+1>, L1D_SET+1> prefetch_bit[NUM_CPUS];
+// This function returns whether a prefetch hit occurs.
+// If a prefetch hit occurs, unset the prefetch bit so that second access is not regarded as a prefetch hit.
+bool prefetch_bit_operate(RawAddr addr, bool cache_hit) {
+	if (cache_hit) {
+		const size_t set = static_cast<uint64_t>(addr) >> LOG2_BLOCK_SIZE & ~-L1D_SET;
+		const size_t way = std::find(meta_cache[pCache->cpu].at(set).begin(), meta_cache[pCache->cpu].at(set).end(), make_L1D_tag(addr)) - meta_cache[pCache->cpu].at(set).begin();
+		const bool ret = prefetch_bit[pCache->cpu].at(set).at(way);
+		prefetch_bit[pCache->cpu].at(set).at(way) = false;
+		return ret;
+	} else {
+		// All cache misses are not prefetch hits.
+		return false;
+	}
+}
+
+// ---------------------
+//  RecentRequestsTable
+// ---------------------
+// BOP like timing learning table. 
+// This is used to know what access should trigger prefetch for current access.
+// Budget:
+//  pc      16bit X 16entry = 256bits
+//  address 48bit X 16entry = 768bits
+//  lru bit  4bit X 16entry =  64bits
+//                           1168bits
+FullyAssociativeLRUSet<TriggerAccess, RecentRequestTableSize> recent_requests_table[NUM_CPUS];
+
+// ---------------
+//  Step table
+// ---------------
+// Step Table is a table to learn steps of the same PC including confidence.
+// In addition, Step Table records the appropriate trigger PCs of a certain target PC.
+// Note: Step table also records delta "0".
+// Normal delta prefetchers do not learn delta "0", but learning of delta "0" is useful in T-SKID that controls prefetch timing.
+// Budget:
+//  target pc tag    12bit X 512entry =   6144bits
+//  last access addr 48bit X 512entry =  24576bits
+//  step         4 X 13bit X 512entry =  26624bits
+//   confidenece 4 X  3bit X 512entry =   6144bits
+//   denominator      5bit X 512entry =   2560bits
+//  trigger pc  16 X 16bit X 512entry = 131072bits
+//   confidence 16 X  3bit X 512entry =  24576bits
+//   denominator      7bit X 512entry =   3584bits
+//  lru bit           5bit X 512entry =   2560bits
+//                                      227840bits
+PCSetAssociativeLRUTable<StepInfo, StepTableSize/16, 16> step_table[NUM_CPUS];
+
+// ------------
+//  DelayQueue
+// ------------
+// Without the delay queue, the prefetcher would not the timing of cache fill of access 
+// by cache hit. By putting access in the delay queue and inserting it into RRT, the 
+// prefethcer can learn the appropriate timing for cache hit access as well.
+// The main memory access latency is at least 97 cycle; We choose DELAY_TIME=100. 
+// Budget:
+//  pc      16bit X 128entry = 2048bits
+//  address 48bit X 128entry = 6144bits
+//  time    16bit X 128entry = 2048bits
+//                            10240bits
+DelayQueue<TriggerAccess, DELAY_QUEUE_SIZE, DELAY_TIME> delay_queue[NUM_CPUS];
+void delay_queue_operate() {
+	while (delay_queue[pCache->cpu].ready_to_pop(current_core_cycle[pCache->cpu])) {
+		recent_requests_table[pCache->cpu].insert_or_touch(delay_queue[pCache->cpu].front());
+		delay_queue[pCache->cpu].pop();
+	}
+}
+
+// -----------------------
+//  InflightPrefetchTable
+// -----------------------
+// Inflight Prefetch Table is a table that holds prefetch access addresses and their PCs until prefetch fill.
+// Budget:
+//  pf_line 42bit X 16entry = 672bits
+//  pc      25bit X 16entry = 400bits
+//  address 48bit X 16entry = 768bits
+//                           1840bits
+FullyAssociativeTable<RawAddr, TriggerAccess, MaxInflightPrefetch> inflight_prefetch[NUM_CPUS];
+
+// --------------
+//  TargetTable
+// --------------
+// Target Table links trigger PCs and target PCs
+// Target Table has roughly the same information as Step Table, but Target Table is a table for reverse lookup with trigger PC as a tag.
+// Budget:
+//  trigger pc tag 12bit X 512entry =   6144bits
+//  target pc 16 X 16bit X 512entry = 131072bits
+//   lru bit  16 X  4bit X 512entry =  32768bits
+//  lru bit         5bit X 512entry =   2560bits
+//                                    172544bits
+PCSetAssociativeLRUTable<FullyAssociativeLRUSet<PC, TargetTable_TargetPerEntry>, TargetTableSize/16, 16> target_table[NUM_CPUS];
+bool prefetching(RawAddr addr) noexcept { return inflight_prefetch[pCache->cpu].contains(mask_line_offset(addr)); }
+
+void train_trigger(PC target_pc) {
+	for (const auto trigger : recent_requests_table[pCache->cpu]) {
+		step_table[pCache->cpu][target_pc].trigger_pc_group.count_up(trigger.pc);
+		target_table[pCache->cpu].allocate_or_touch(trigger.pc);
+		target_table[pCache->cpu][trigger.pc].insert_or_touch(target_pc);
+	}
+}
+
+bool train(PC pc, RawAddr addr, bool virtual_miss) {
+	if (!step_table[pCache->cpu].contains(pc)) {
+		if (virtual_miss) {
+			step_table[pCache->cpu].insert(pc, StepInfo(addr));
+			if (std::any_of(recent_requests_table[pCache->cpu].begin(), recent_requests_table[pCache->cpu].end(), [pc](const TriggerAccess& trigger) noexcept { return trigger.pc == pc; })) {
+				// This is a case that this PC is in RRT. The PC will be able to trigger the same PC access. Using RRT, a step including a distance is learned.
+				// This is first time to refer Step Table with this PC, so a step is not able to be calculated.
+				target_table[pCache->cpu].allocate_or_touch(pc);
+				target_table[pCache->cpu][pc].insert_or_touch(pc);
+			} else {
+				// This is a case that this PC access will be triggered by another PC. An address prediction is made like PC Stride Prefetcher.
+				// Even if it is first time to come here, learning trigger PCs is possible.
+				train_trigger(pc);
+			}
+		} else {
+			return false;
+		}
+	} else {
+		// seen before
+		step_table[pCache->cpu].touch(pc);
+		if (std::any_of(recent_requests_table[pCache->cpu].begin(), recent_requests_table[pCache->cpu].end(), [pc](const TriggerAccess& trigger) noexcept { return trigger.pc == pc; })) {
+			// This is a case that this PC is in RRT. The PC will be able to trigger the same PC access. Using RRT, a step including a distance is learned.
+			for (const auto trigger : recent_requests_table[pCache->cpu]) {
+				if (trigger.pc == pc) {
+					const int64_t step = addr - trigger.addr;
+					if (-PAGE_SIZE < step && step < PAGE_SIZE) {
+						step_table[pCache->cpu][pc].step_group.count_up(step);
+					}
+				}
+				step_table[pCache->cpu][pc].trigger_pc_group.count_up(trigger.pc);
+			}
+			step_table[pCache->cpu][pc].last_addr = addr;
+			target_table[pCache->cpu].allocate_or_touch(pc);
+			target_table[pCache->cpu][pc].insert_or_touch(pc);
+		} else {
+			// This is a case that this PC access will be triggered by another PC. An address prediction is made like PC Stride Prefetcher.
+			// It will be learned even if step == 0.
+			const int64_t step = addr - step_table[pCache->cpu][pc].last_addr;
+			step_table[pCache->cpu][pc].last_addr = addr;
+			if (-PAGE_SIZE < step && step < PAGE_SIZE) {
+				step_table[pCache->cpu][pc].step_group.count_up(step);
+			}
+			train_trigger(pc);
+		}
+	}
+	return true;
+}
+
+bool do_prefetch(TriggerAccess trigger, PC targetPC) {
+	bool triggered = false;
+	const auto& targetPCInfo = step_table[pCache->cpu][targetPC];
+	for (const auto entry : targetPCInfo.step_group) {
+		if (entry.confidence == 0) { continue; }
+		const int64_t step = entry.key;
+		const RawAddr base_addr = targetPCInfo.last_addr;
+		const RawAddr pf_addr = base_addr + step;
+		if (is_in_the_same_page(base_addr, pf_addr) && !is_in_cache(pf_addr) && !prefetching(pf_addr)) {
+			int success = pCache->prefetch_line(static_cast<uint64_t>(trigger.pc), static_cast<uint64_t>(targetPCInfo.last_addr), static_cast<uint64_t>(pf_addr), FILL_L1, 0);
+			if (success) {
+				inflight_prefetch[pCache->cpu].insert(mask_line_offset(pf_addr), trigger);
+				triggered = true;
+			}
+		}
+	}
+	return triggered;
+}
+
+int operate(RawAddr addr, PC pc, bool cache_hit, bool prefetch_hit) {
+	const bool cache_miss = !cache_hit;
+	const bool virtual_miss = cache_miss || prefetch_hit;
+	TriggerAccess trigger { pc, addr };
+
+	// If the PC has not been virtual_miss recently, including this time, then update == false.
+	const bool updated = train( pc, addr, virtual_miss );
+
+	// Issue prefetch.
+	// Control using confidence is not performed.
+	bool triggered = false;
+	if (target_table[pCache->cpu].contains(pc)) {
+		auto& targetPCs = target_table[pCache->cpu][pc];
+		for (auto targetPC : targetPCs) {
+			if (!step_table[pCache->cpu].contains(targetPC)){
+				targetPCs.move_to_lru(targetPC);
+			} else {
+				if (step_table[pCache->cpu][targetPC].trigger_pc_group.contains(pc)) {
+					triggered |= do_prefetch(trigger, targetPC);
+				} else {
+					targetPCs.move_to_lru(targetPC);
+				}
+			}
+		}
+	}
+
+	// Some prefetches were issued successfully.
+	// Timing learning will be done at cache filling. 
+	// So things to do with this function are over.
+	if (triggered) {
+		return 1;
+	}
+
+	// It was not possible to prefetch. The followings are workarounds.
+
+	if (pCache->PQ.occupancy == pCache->PQ.SIZE) {
+		// Because PQ is full, the PC and the address are not inserted to RRT.
+		// The PC is not suitable as trigger since PQ may be full after next time too.
+		return 0;
+	}
+
+	if (!updated) {
+		// The PC whose access hits every time is not inserted to RRT.
+		return 0;
+	}
+
+	// Timing learning using Next Line Prefetcher.
+	const RawAddr pf_addr = addr + BLOCK_SIZE;
+	if (is_in_the_same_page(addr, pf_addr) && !is_in_cache(pf_addr) && !prefetching(pf_addr)) {
+		int success = pCache->prefetch_line(static_cast<uint64_t>(pc), static_cast<uint64_t>(addr), static_cast<uint64_t>(pf_addr), FILL_L1, 0);
+		if (success) {
+			inflight_prefetch[pCache->cpu].insert(mask_line_offset(pf_addr), trigger);
+			return 1;
+		}
+	}
+
+	// Timing larning via delay queue.
+	delay_queue[pCache->cpu].push(trigger, current_core_cycle[pCache->cpu]);
+	return 0;
+}
+
+void cache_fill(RawAddr addr, bool prefetch) {
+	if (prefetching(addr)) {
+		// If the addr is filled by prefetch, the information (trigger PC and its address) saved in inflight_prefetch is inserted to RRT.
+		recent_requests_table[pCache->cpu].insert_or_touch(inflight_prefetch[pCache->cpu].get(mask_line_offset(addr)));
+		inflight_prefetch[pCache->cpu].invalidate(mask_line_offset(addr));
+	}
+}
+
+} // namespace anonymous
+
+void CACHE::l1d_prefetcher_final_stats()
+{
+}
+
+void CACHE::l1d_prefetcher_initialize()
+{
+	std::cout << "L1D N-SKID Prefetcher" << std::endl;
+	std::cout << "[StepTable.size=" << StepTableSize << ", TargetTable.size=" << TargetTableSize << ", RRT.size=" << RecentRequestTableSize << std::endl;
+	std::cout << "[TargetTable.entry.size=" << TargetTable_TargetPerEntry << ", DelayQueue.size=" << DELAY_QUEUE_SIZE << ", Delay=" << DELAY_TIME << "]" << std::endl;
+}
+
+void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type, uint8_t critical_ip_flag)
+{
+	pCache = this;
+	const bool prefetch_hit = ::prefetch_bit_operate(RawAddr(addr), cache_hit);
+	::delay_queue_operate();
+	::operate(RawAddr(addr), PC(ip), cache_hit, prefetch_hit);
+}
+
+void CACHE::l1d_prefetcher_cache_fill(uint64_t v_addr, uint64_t addr, uint32_t set, uint32_t way, uint8_t prefetch, uint64_t v_evicted_addr, uint64_t evicted_addr, uint32_t metadata_in)
+{
+	pCache = this;
+	::meta_cache[pCache->cpu].at(set).at(way) = ::make_L1D_tag(RawAddr(addr));
+	::prefetch_bit[pCache->cpu].at(set).at(way) = static_cast<bool>(prefetch);
+	::delay_queue_operate();
+	::cache_fill(RawAddr(addr), prefetch);
+}
+
+void CACHE::l1d_prefetcher_notify_about_dtlb_eviction(uint64_t addr, uint32_t set, uint32_t way, uint8_t prefetch, uint64_t evicted_addr, uint32_t metadata_in)
+{
+
+}

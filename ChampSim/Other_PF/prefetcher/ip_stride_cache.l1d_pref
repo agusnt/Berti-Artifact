@@ -1,0 +1,141 @@
+#include "cache.h"
+
+#define IP_TRACKER_SET 256
+#define IP_TRACKER_WAY 16
+#define MASK_SET 0xFF
+#define PREFETCH_DEGREE 3
+
+class IP_TRACKER {
+  public:
+    // the IP we're tracking
+    uint64_t ip;
+
+    // the last address accessed by this IP
+    uint64_t last_cl_addr;
+
+    // the stride between the last two addresses accessed by this IP
+    int64_t last_stride;
+
+    // use LRU to evict old IP trackers
+    uint32_t lru;
+
+    IP_TRACKER () {
+        ip = 0;
+        last_cl_addr = 0;
+        last_stride = 0;
+        lru = 0;
+    };
+};
+
+IP_TRACKER trackers[IP_TRACKER_SET][IP_TRACKER_WAY];
+
+
+void CACHE::l1d_prefetcher_initialize() 
+{
+	cout << "CPU " << cpu << " L1D IP-based stride prefetcher" << endl;
+	for (int j=0; j<IP_TRACKER_SET; j++)
+    {
+	for (int i=0; i<IP_TRACKER_WAY; i++)
+        	trackers[j][i].lru = i;
+    }
+
+}
+
+void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type, uint8_t critical_ip_flag)
+{
+	// check for a tracker hit
+    uint64_t cl_addr = addr >> LOG2_BLOCK_SIZE;
+    uint64_t set = ip & MASK_SET;
+
+    int index = -1;
+    for (index=0; index<IP_TRACKER_WAY; index++) {
+        if (trackers[set][index].ip == ip)
+            break;
+    }
+
+    // this is a new IP that doesn't have a tracker yet, so allocate one
+    if (index == IP_TRACKER_WAY) {
+
+        for (index=0; index<IP_TRACKER_WAY; index++) {
+            if (trackers[set][index].lru == (IP_TRACKER_WAY-1))
+                break;
+        }
+
+        trackers[set][index].ip = ip;
+        trackers[set][index].last_cl_addr = cl_addr;
+        trackers[set][index].last_stride = 0;
+
+        //cout << "[IP_STRIDE] MISS index: " << index << " lru: " << trackers[index].lru << " ip: " << hex << ip << " cl_addr: " << cl_addr << dec << endl;
+	for (int i=0; i<IP_TRACKER_WAY; i++) {
+            if (trackers[set][i].lru < trackers[set][index].lru)
+                trackers[set][i].lru++;
+        }
+        trackers[set][index].lru = 0;
+
+        return; //metadata_in;
+    }
+
+	// sanity check
+    // at this point we should know a matching tracker index
+    if (index == -1)
+        assert(0);
+
+    // calculate the stride between the current address and the last address
+    // this bit appears overly complicated because we're calculating
+    // differences between unsigned address variables
+    int64_t stride = 0;
+    if (cl_addr > trackers[set][index].last_cl_addr)
+        stride = cl_addr - trackers[set][index].last_cl_addr;
+    else {
+        stride = trackers[set][index].last_cl_addr - cl_addr;
+        stride *= -1;
+    }
+
+    //cout << "[IP_STRIDE] HIT  index: " << index << " lru: " << trackers[index].lru << " ip: " << hex << ip << " cl_addr: " << cl_addr << dec << " stride: " << stride << endl;
+
+    // don't do anything if we somehow saw the same address twice in a row
+    if (stride == 0)
+        return;	//metadata_in;
+
+    // only do any prefetching if there's a pattern of seeing the same
+    // stride more than once
+    if (stride == trackers[set][index].last_stride) {
+
+        // do some prefetching
+        for (int i=0; i<PREFETCH_DEGREE; i++) {
+            uint64_t pf_address = (cl_addr + (stride*(i+1))) << LOG2_BLOCK_SIZE;
+
+            // only issue a prefetch if the prefetch address is in the same 4 KB page
+            // as the current demand access address
+            if ((pf_address >> LOG2_PAGE_SIZE) != (addr >> LOG2_PAGE_SIZE))
+                break;
+
+            // check the MSHR occupancy to decide if we're going to prefetch to the L1 or L2
+            if (MSHR.occupancy < (MSHR.SIZE>>1))
+              prefetch_line(ip, addr, pf_address, FILL_L1, 0);
+            else
+              prefetch_line(ip, addr, pf_address, FILL_L2, 0);
+        }
+    }
+
+    trackers[set][index].last_cl_addr = cl_addr;
+    trackers[set][index].last_stride = stride;
+
+    for (int i=0; i<IP_TRACKER_WAY; i++) {
+        if (trackers[set][i].lru < trackers[set][index].lru)
+            trackers[set][i].lru++;
+    }
+    trackers[set][index].lru = 0;
+    return; //metadata_in;
+}
+
+void CACHE::l1d_prefetcher_cache_fill(uint64_t v_addr, uint64_t addr, uint32_t set, uint32_t way, uint8_t prefetch, uint64_t v_evicted_addr, uint64_t evicted_addr, uint32_t metadata_in)
+{
+	return; //metadata_in;
+}
+
+void CACHE::l1d_prefetcher_final_stats()
+{
+	cout << "CPU " << cpu << " L1D PC-based stride prefetcher final stats" << endl;
+	cout << "Degree: " << PREFETCH_DEGREE << endl;
+}
