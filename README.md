@@ -116,4 +116,4 @@ Options:
  -g: build GCC7.5 from scratch
  -d: compile with docker
  -c: clean all generated files (traces and gcc7.5)
-```Bash
+```
