@@ -118,4 +118,4 @@ Options:
  -c: clean all generated files (traces and gcc7.5)
  -l: generate a log for debug purpose
  -r: always download SPEC CPU2K17 traces
-```Bash
+```
