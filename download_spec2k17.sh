@@ -68,10 +68,9 @@ num=0
 for i in "${TRACES[@]}"; do
     # Download spec traces
     if [[ "$VERBOSE" == "Y" ]]; then
-        #curl $URL$i --output $DIR/$i
-        echo "Y"
-        curl --progress-bar $URL$i --output $DIR/$i 2>&1 | 
-            tr $'\r' $'\n' | sed -r 's/[# ]+/#/g;'
+        curl --progress-bar $URL$i --output $DIR/$i
+    elif [[ "$LOGGED" == "Y" ]]; then
+        curl --progress-bar $URL$i --output $DIR/$i >> $LOG 2>&1
     else
         curl --progress-bar $URL$i --output $DIR/$i 2>&1 | tr -d '\n'
     fi

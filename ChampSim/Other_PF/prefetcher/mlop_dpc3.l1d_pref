@@ -651,8 +651,6 @@ class MLOP {
 
                 if (this->is_inside_zone(offset_to_prefetch) && cache->PQ.occupancy < cache->PQ.SIZE &&
                     cache->PQ.occupancy + cache->MSHR.occupancy < cache->MSHR.SIZE - 1) {
-// Agus
-                        std::cerr << std::hex << block_number << " :: " << std::dec << cur_pf_offset << std::endl;
                     uint64_t pf_block_number = block_number + cur_pf_offset;
                     uint64_t base_addr = block_number << LOG2_BLOCK_SIZE;
                     uint64_t pf_addr = pf_block_number << LOG2_BLOCK_SIZE;
