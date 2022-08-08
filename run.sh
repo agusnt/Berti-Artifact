@@ -18,6 +18,7 @@ DOCKER="N"
 REMOVE_ALL="N"
 LOGGED="N"
 DOWNLOAD="N"
+BUILD="Y"
 
 ################################################################################
 #                                Global Vars                                 #
@@ -165,13 +166,14 @@ print_help ()
     echo " -c: clean all generated files (traces and gcc7.5)" 
     echo " -l: generate a log for debug purpose" 
     echo " -r: always download SPEC CPU2K17 traces" 
+    echo " -n: no build the simulator" 
     exit
 }
 ################################################################################
 #                                Parse Options                               #
 ################################################################################
 
-while getopts :vlrcdhgp: opt; do
+while getopts :vlrcdhngp: opt; do
     case "${opt}" in
           v) VERBOSE="Y"
               echo -e "\033[1mVerbose Mode\033[0m"
@@ -195,6 +197,9 @@ while getopts :vlrcdhgp: opt; do
               ;;
           r) DOWNLOAD="Y"
               echo -e "\033[1mAlways download SPEC CPU2K17 traces\033[0m"
+              ;;
+          n) BUILD="N"
+              echo -e "\033[1mNOT build the simulator\033[0m"
               ;;
           h) print_help;;
      esac
@@ -245,32 +250,35 @@ fi
 #----------------------------------------------------------------------------#
 #                                Build ChampSim                              #
 #----------------------------------------------------------------------------#
-if [[ "$LOGGED" == "Y" ]]; then
-    echo "Building" >> $LOG
-    echo "============================================================" >> $LOG
-fi
-
 # Build Berti
-echo -n "Building Berti..."
-cd $BERTI
-run_compile "./build_champsim.sh hashed_perceptron no vberti no no no no no\
-        lru lru lru srrip drrip lru lru lru 1 no"
-cd $DIR
+if [[ "$BUILD" == "Y" ]]; then
 
-# Build MLOP, IPCP and IP Stride
-cd $PF
-echo -n "Building MLOP..."
-run_compile "./build_champsim.sh hashed_perceptron no mlop_dpc3 no no no no no\
-        lru lru lru srrip drrip lru lru lru 1 no"
+    if [[ "$LOGGED" == "Y" ]]; then
+        echo "Building" >> $LOG
+        echo "============================================================" >> $LOG
+    fi
 
-echo -n "Building IPCP..."
-run_compile "./build_champsim.sh hashed_perceptron no ipcp_isca2020 no no no no\
-        no lru lru lru srrip drrip lru lru lru 1 no"
-
-echo -n "Building IP Stride..."
-run_compile "./build_champsim.sh hashed_perceptron no ip_stride no no no no no\
-        lru lru lru srrip drrip lru lru lru 1 no"
-cd $DIR
+    echo -n "Building Berti..."
+    cd $BERTI
+    run_compile "./build_champsim.sh hashed_perceptron no vberti no no no no no\
+            lru lru lru srrip drrip lru lru lru 1 no"
+    cd $DIR
+    
+    # Build MLOP, IPCP and IP Stride
+    cd $PF
+    echo -n "Building MLOP..."
+    run_compile "./build_champsim.sh hashed_perceptron no mlop_dpc3 no no no no no\
+            lru lru lru srrip drrip lru lru lru 1 no"
+    
+    echo -n "Building IPCP..."
+    run_compile "./build_champsim.sh hashed_perceptron no ipcp_isca2020 no no no no\
+            no lru lru lru srrip drrip lru lru lru 1 no"
+    
+    echo -n "Building IP Stride..."
+    run_compile "./build_champsim.sh hashed_perceptron no ip_stride no no no no no\
+            lru lru lru srrip drrip lru lru lru 1 no"
+    cd $DIR
+fi
 
 #----------------------------------------------------------------------------#
 #                                Running Simulations                         #
