@@ -241,9 +241,6 @@ fi
 if [ ! -d "$TRACES_SPEC" ] || [ "$DOWNLOAD" == "Y" ]; then
     ./download_spec2k17.sh $TRACES_SPEC
 fi
-#                          Download SPEC CPU2017 Traces                      #
-#----------------------------------------------------------------------------#
-./download_spec2k17.sh $TRACES_SPEC
 
 #----------------------------------------------------------------------------#
 #                                Build ChampSim                              #
