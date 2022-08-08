@@ -23,7 +23,7 @@ DOWNLOAD="N"
 #                                Global Vars                                 #
 ################################################################################
 
-CONTAINER="podman"
+CONTAINER="docker"
 DIR=$(pwd)
 BERTI="./ChampSim/Berti"
 PF="./ChampSim/Other_PF"
@@ -241,6 +241,9 @@ fi
 if [ ! -d "$TRACES_SPEC" ] || [ "$DOWNLOAD" == "Y" ]; then
     ./download_spec2k17.sh $TRACES_SPEC
 fi
+#                          Download SPEC CPU2017 Traces                      #
+#----------------------------------------------------------------------------#
+./download_spec2k17.sh $TRACES_SPEC
 
 #----------------------------------------------------------------------------#
 #                                Build ChampSim                              #
