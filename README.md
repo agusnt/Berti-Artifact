@@ -119,4 +119,27 @@ Options:
  -l: generate a log for debug purpose
  -r: always download SPEC CPU2K17 traces
  -n: no build the simulator
+ -f: execute GAP, CloudSuite, and Multi-Level prefetcher
+ -m: execute 4-Core
 ```
+
+## Full Simulation
+
+We have included two extra options that increase the execution time of the
+artifact, but in return, it reproduce the results for GAP, CloudSuite, Multi-Level
+prefetchers and MultiCore.
+
+To reproduce the results first of all you have to download all the traces. Since
+CloudSuite and GAP traces can not be downloaded automatic, so you need to
+download [GAP
+traces](https://utexas.app.box.com/s/2k54kp8zvrqdfaa8cdhfquvcxwh7yn85/folder/132804668078)
+and copy them into `traces/gap` folder. And download [CloudSuite
+traces](https://www.dropbox.com/sh/pgmnzfr3hurlutq/AACciuebRwSAOzhJkmj5SEXBa/CRC2_trace?dl=0&subfolder_nav_tracking=1)
+and copy them into `traces/cs`.
+
+After that you have to execute `./run.sh -f -m` to run the full abstract. New
+pdfs will appear, the name of the pdf corresponds to the figure reproduced in
+the article.
+
+**NOTE**: The full simulation options (`-f -m`) takes several days to finish
+even in a high performance system.

@@ -80,10 +80,10 @@ def add_to_dic(dic, value, i, key):
     l1dpref = i.split('-')[2]
     l2dpref = i.split('-')[3]
     perfect = i.split('-')[17]
-    bench = i.split('---')[-1]
+    bench = '.'.join(i.split('---')[-1].split('.')[:-1])
 
-    if only_intensive and bench not in spec2k17_memory_intensive:
-        return
+    #if only_intensive and bench not in spec2k17_memory_intensive:
+    #    return
 
     # Casos especiales (cache perfecta, tamaños de biswa)
     if perfect != 'no':
@@ -111,8 +111,6 @@ def add_to_dic(dic, value, i, key):
             if l1dpref == "no":
                 l1dpref = "{}_{}".format(l1dpref, perfect)
             if l1dpref == "vberti_ross_hash_launch":
-                l1dpref = "{}_{}".format(l1dpref, perfect)
-            if l1dpref == "vberti_ross_hash":
                 l1dpref = "{}_{}".format(l1dpref, perfect)
     
     # Crear estructura
@@ -150,11 +148,12 @@ def get_ipc(fname, dic):
         if aux == []:
             continue
 
-        if len(aux) > 1:
-            # Simulaciones Multicore
-            ipc = stats.harmonic_mean(aux)
-        else:
-            ipc = aux[0]
+        #if len(aux) > 1:
+        #    # Simulaciones Multicore
+        #    ipc = stats.harmonic_mean(aux)
+        #else:
+        #    ipc = aux[0]
+        ipc = aux
 
         add_to_dic(dic, ipc, i, "ipc")
 
@@ -177,8 +176,10 @@ def get_ipc(fname, dic):
                         #    aux = "no_{}".format(mt)
                         #else:
                         #    aux = "no"
-                        aux = dic[i][ii][iii][iiii]['ipc'] /\
-                            dic['no']['ip_stride']['no'][iiii]['ipc']
+                        aux = []
+                        for iiiii, _ in enumerate(dic[i][ii][iii][iiii]['ipc']):
+                            aux.append(dic[i][ii][iii][iiii]['ipc'][iiiii] /\
+                            dic['no']['ip_stride']['no'][iiii]['ipc'][iiiii])
 
                         dic[i][ii][iii][iiii]['SpeedUp'] = aux
 
@@ -290,54 +291,6 @@ def get_l1daccuracy(fname, dic):
 
         add_to_dic(dic, timepf, i, "L1DAccuracyTime")
         add_to_dic(dic, latepf, i, "L1DAccuracyLate")
-
-def get_l2accuracy(fname, dic):
-    # Obtener datos
-    raw = parse.iterateOverDir(fname, "L2C USEFUL LOAD PREFETCHES.*")
-    raw_2 = parse.iterateOverDir(fname, "L2C PREFETCH  REQUESTED.*")
-    raw_3 = parse.iterateOverDir(fname, "L2C TIMELY PREFETCHES.*")
-
-    for i, j, k in zip(raw, raw_2, raw_3):
-        # Simple comprobacion de errores
-        #if (len(raw) < 1):
-        #    print("Error: {}".format(i))
-        #    sys.exit()
-        #for ii in raw[i]:
-        #    if ii == []:
-        #        print("Error: {}".format(i))
-        #        sys.exit()
-
-        time = []
-        late = []
-        for ii, jj, kk in zip(raw[i], raw_2[j], raw_3[k]):
-            for iii, jjj, kkk in zip(ii, jj, kk):
-
-                useful = (int(' '.join(kkk.split()).split('TIMELY PREFETCHES: ')[-1].split(' ')[0]))
-                latepf = (int(' '.join(kkk.split()).split('LATE PREFETCHES: ')[-1].split(' ')[0]))
-                issued = (int(' '.join(jjj.split()).split('USELESS: ')[-1].split(' ')[0]))
-
-                total = useful + latepf + issued
-
-                if total != 0:
-                    late.append((latepf + useful) / total)
-                    time.append(useful / total)
-        
-        if time == []:
-            continue
-
-        if len(time) > 1:
-            # Simulaciones Multicore
-            timepf = np.mean(time)
-            latepf = np.mean(late)
-        else:
-            timepf = time[0]
-            latepf = late[0]
-        if time != time:
-            continue
-
-        add_to_dic(dic, timepf, i, "L2AccuracyTime")
-        add_to_dic(dic, latepf, i, "L2AccuracyLate")
-
 
 def get_l1dcoverage(fname, dic):
     raw = parse.iterateOverDir(fname, "L1D TIMELY PREFETCHES:.*")
@@ -583,15 +536,22 @@ def get_traffic(fname, dic):
 if __name__ == "__main__":
     dic = {}
     base = {}
-    metrics = ["SpeedUp", "L1DAccuracyTime", "L1DAccuracyLate", "L1DMPKI", 
-            "L2CMPKI", "LLCMPKI"]
+    metrics = ["SpeedUp"]
 
     if sys.argv[1] == "y":
         # Only memory intensive SPEC2K17
         only_intensive = True
 
     get_ipc(sys.argv[2], dic)
-    get_l1daccuracy(sys.argv[2], dic)
+    #get_l1dmpki(sys.argv[2], dic)
+    #get_traffic(sys.argv[2], dic)
+    #get_l2cmpki(sys.argv[2], dic)
+    #get_llcmpki(sys.argv[2], dic)
+    #get_l1daccuracy(sys.argv[2], dic)
+    #get_l1dcoverage(sys.argv[2], dic)
+    #get_l2ccoverage(sys.argv[2], dic)
+    #get_stlb_mpki(sys.argv[2], dic)
+    #get_stlb_apki(sys.argv[2], dic)
 
     # Print head
     head = "L1DPref;L2DPref;{}".format(";".join(metrics))
@@ -614,14 +574,14 @@ if __name__ == "__main__":
                     for iiii in dic[i][ii][iii]:
                         # Bench level
                         if jjjj in dic[i][ii][iii][iiii]:
-                            aux.append(dic[i][ii][iii][iiii][jjjj])
+                            aux = aux + (dic[i][ii][iii][iiii][jjjj])
                         else:
-                            aux.append(0)
+                            aux = aux + [0]
                     if jjjj == "SpeedUp":
-                        line[ii][iii] = "{};{:02}".format(line[ii][iii],\
+                        line[ii][iii] = "{};{}".format(line[ii][iii],\
                                 scipy.stats.mstats.gmean(aux))
                     else:
-                        line[ii][iii] = "{};{:02}".format(line[ii][iii],\
+                        line[ii][iii] = "{};{}".format(line[ii][iii],\
                                 np.mean(aux))
 
 

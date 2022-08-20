@@ -58,7 +58,7 @@
 #endif
 
 // CPU
-#define NUM_CPUS 1
+#define NUM_CPUS 4
 #define CPU_FREQ 4000
 //#define DRAM_IO_FREQ 6400	//1600	Neelu: Changed 
 #define DRAM_IO_FREQ 6400 

@@ -583,7 +583,8 @@ def get_traffic(fname, dic):
 if __name__ == "__main__":
     dic = {}
     base = {}
-    metrics = ["SpeedUp", "L1DAccuracyTime", "L1DAccuracyLate"]
+    metrics = ["SpeedUp", "L1DAccuracyTime", "L1DAccuracyLate", "L1DMPKI", 
+            "L2CMPKI", "LLCMPKI"]
 
     if sys.argv[1] == "y":
         # Only memory intensive SPEC2K17
