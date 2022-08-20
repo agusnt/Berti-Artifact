@@ -289,6 +289,10 @@ if [[ "$BUILD" == "Y" ]]; then
             lru lru lru srrip drrip lru lru lru 1 no"
 
     if [[ "$FULL" == "Y" ]]; then
+        echo -n "Building No Prefetcher..."
+        run_compile "./build_champsim.sh hashed_perceptron no no\
+                no no no no no lru lru lru srrip drrip lru lru lru 1 no"
+    
         echo -n "Building IPCP+IPCP..."
         run_compile "./build_champsim.sh hashed_perceptron no ipcp_isca2020\
                 ipcp_isca2020 no no no no lru lru lru srrip drrip lru lru lru 1 no"
