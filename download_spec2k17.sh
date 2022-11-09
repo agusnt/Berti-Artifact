@@ -7,7 +7,7 @@
 #
 
 DIR="$1"
-URL="https://hpca23.cse.tamu.edu/champsim-traces/speccpu/"
+URL="https://dpc3.compas.cs.stonybrook.edu/champsim-traces/speccpu/"
 TRACES=(
     '602.gcc_s-734B.champsimtrace.xz'
     '602.gcc_s-1850B.champsimtrace.xz'
@@ -62,7 +62,6 @@ RED=$'\e[0;31m'
 NC=$'\e[0m'
 
 mkdir -p $DIR > /dev/null 2>&1
-
 echo "Download SPEC CPU2017 traces [0/$NUM_TRACES] "
 num=0
 for i in "${TRACES[@]}"; do
