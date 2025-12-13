@@ -4,6 +4,7 @@
 #include "vberti_size.h"
 
 #include "cache.h"
+#include "ooo_cpu.h"
 #include <algorithm>
 #include <vector>
 #include <tuple>
