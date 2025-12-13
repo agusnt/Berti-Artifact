@@ -165,8 +165,10 @@ uint64_t latency_table_del(uint64_t line_addr, uint32_t cpu)
         // Line already in the table
         if (latencyt[cpu][i].addr == line_addr)
         {
-            uint64_t latency = (current_core_cycle[cpu] & TIME_MASK)
+            int64_t latency_diff = (current_core_cycle[cpu] & TIME_MASK)
                 - latencyt[cpu][i].time; // Calculate latency
+
+            uint64_t latency = (latency_diff > 0) ? (uint64_t)latency_diff : 0;
 
             //latencyt[cpu][i].addr = 0; // Free the entry
             latencyt[cpu][i].tag  = 0; // Free the entry
@@ -318,7 +320,7 @@ uint8_t shadow_cache_is_pf(uint32_t cpu, uint64_t line_addr)
     return 0;
 }
 
-uint8_t shadow_cache_latency(uint32_t cpu, uint64_t line_addr)
+uint64_t shadow_cache_latency(uint32_t cpu, uint64_t line_addr)
 {
     /*
      * Init shadow cache
@@ -382,6 +384,25 @@ void history_table_add(uint64_t tag, uint32_t cpu, uint64_t addr)
     addr &= ADDR_MASK;
 
     uint64_t cycle = current_core_cycle[cpu] & TIME_MASK;
+
+    // For continuous same ip and same addr replay (e.g. due to MSHR full),
+    // update the cycle stamp to the latest cycle, instead of allocating a new entry to history table.
+    // Since there can be MAX_READ tag lookup at the same cycle, search for the lastest MAX_READ history table entries.
+    history_table_t *prev_history_pointer = history_pointers[cpu][set];
+
+    for (uint64_t i = 0; i < ooo_cpu[cpu].L1D.MAX_READ; i++) {
+      if (prev_history_pointer == &historyt[cpu][set][0]) {
+        prev_history_pointer = &historyt[cpu][set][HISTORY_TABLE_WAY - 1];
+      } else {
+        prev_history_pointer--;
+      }
+
+      if ((prev_history_pointer->tag == tag) && (prev_history_pointer->addr == addr)) {
+        prev_history_pointer->time = cycle;
+        return;
+      }
+    }
+
     // Save new element into the history table
     history_pointers[cpu][set]->tag       = tag;
     history_pointers[cpu][set]->time      = cycle;
@@ -409,6 +430,13 @@ uint16_t history_table_get_aux(uint32_t cpu, uint32_t latency,
 
     do
     {
+        // The write pointer points to the oldest history,
+        // move to the yougnest entry to start find timely prefetch launch address
+        if (pointer == historyt[cpu][set])
+        {
+            pointer = &historyt[cpu][set][HISTORY_TABLE_WAY - 1];
+        } else pointer--;
+
         // Look for the IPs that can launch this prefetch
         if (pointer->tag == tag && pointer->time <= cycle)
         {
@@ -426,11 +454,6 @@ uint16_t history_table_get_aux(uint32_t cpu, uint32_t latency,
             addr[num_on_time] = pointer->addr;
             num_on_time++;
         }
-
-        if (pointer == historyt[cpu][set])
-        {
-            pointer = &historyt[cpu][set][HISTORY_TABLE_WAY - 1];
-        } else pointer--;
     } while (pointer != history_pointers[cpu][set]);
 
     return num_on_time;
@@ -516,7 +539,7 @@ void vberti_table_add(uint64_t tag, uint32_t cpu, int64_t stride)
         {
             uint64_t key = vbertit_queue[cpu].front();
             vberti_t *tmp = vbertit[cpu][key];
-            delete tmp->stride;
+            delete[] tmp->stride;
             delete tmp;
             vbertit[cpu].erase(vbertit_queue[cpu].front());
             vbertit_queue[cpu].pop();
@@ -557,7 +580,7 @@ void vberti_table_add(uint64_t tag, uint32_t cpu, int64_t stride)
         }
     }
 
-    uint8_t dx_conf = 100;
+    uint64_t dx_conf = 100;
     int dx_remove = -1;
     for (int i = 0; i < BERTI_TABLE_STRIDE_SIZE; i++)
     {
@@ -628,6 +651,11 @@ uint8_t vberti_table_get(uint64_t tag, uint32_t cpu, stride_t res[MAX_PF])
             res[dx].rpl = aux[i].rpl;
             dx++;
         }
+        // BERTI_TABLE_STRIDE_SIZE can be larger than MAX_PF
+        if (dx == MAX_PF)
+        {
+            break;
+        }
     }
 
     if (dx == 0 && tmp->conf >= LANZAR_INT)
@@ -642,6 +670,11 @@ uint8_t vberti_table_get(uint64_t tag, uint32_t cpu, stride_t res[MAX_PF])
                 uint64_t aux_conf   = (uint64_t) (temp * 100);
                 res[dx].per = aux_conf;
                 dx++;
+                // BERTI_TABLE_STRIDE_SIZE can be larger than MAX_PF
+                if (dx == MAX_PF)
+                {
+                    break;
+                }
             }
         }
         sort(res, res + MAX_PF, compare_greater_stride_t_per);
@@ -654,12 +687,12 @@ uint8_t vberti_table_get(uint64_t tag, uint32_t cpu, stride_t res[MAX_PF])
             else res[i].rpl = R;
         }
         sort(res, res + MAX_PF, compare_greater_stride_t);
-        return 1;
+        return (dx != 0);
     }
 
     sort(res, res + MAX_PF, compare_greater_stride_t);
 
-    return 1;
+    return (dx != 0);
 }
 
 void find_and_update(uint32_t cpu, uint64_t latency, uint64_t tag, 
@@ -740,8 +773,11 @@ void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
 
         // Buscar strides Y actualizar
         uint64_t latency = shadow_cache_latency(cpu, line_addr);
-        find_and_update(cpu, latency, ip, current_core_cycle[cpu] & TIME_MASK, 
-                line_addr);
+        if (latency != 0)
+        {
+            find_and_update(cpu, latency, ip, current_core_cycle[cpu] & TIME_MASK,
+                    line_addr);
+        }
 
         history_table_add(ip, cpu, line_addr); 
     } else
@@ -770,7 +806,7 @@ void CACHE::l1d_prefetcher_operate(uint64_t addr, uint64_t ip, uint8_t cache_hit
         uint64_t p_b_addr = (p_addr >> LOG2_BLOCK_SIZE);
 
         //if (!shadow_cache_get(cpu, p_b_addr)
-        if (!latency_table_get(p_addr, cpu))
+        if (!latency_table_get(p_b_addr, cpu))
         {
             // Is in the RR
             //bool find_rr = false;
